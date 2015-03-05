@@ -4,6 +4,7 @@ import requests
 from pathlib import Path
 import sys
 import re
+import json
 
 
 
@@ -16,7 +17,7 @@ mpDicSenseData={"meaning":None,"example":None,"synonyms":None,"subsense":None}  
 mpDicData = {"word": {"name": None, "rank": None, "syl": None,"lin":None, "pro":None},
             "definition":None,#{[{"partOfSpeech":None,"inflection":None,"sense":None },]},   #all of this item are mpDicDefData[]
             "Origin":None,"Usage":None,
-            "Phrases":["ERROR",],"Phrasal verbs":[], "deri":["ERROR",], "rhyme":["ERROR",], "see":["ERROR",], "near":["ERROR",]} #
+            "Phrases":None,"Phrasal verbs":None, "Derivatives":None, "rhyme":None, "See":["ERROR",], "Nearby":["ERROR",]} #
 
 class FecError(Exception):
     """Hello,i am error from CDicFetch~~
@@ -43,16 +44,16 @@ def find_all_mustbe(beati, name=None, attrs={}, recursive=True, text=None,
              limit=None, **kwargs):
     rt = beati.find_all(name,attrs,recursive,text,limit,**kwargs)
     if not rt:
-        raise FileExistsError("name={0},attrs={1}".format(name,attrs))
+        raise FecMissSyntaxErr("name={0},attrs={1}".format(name,attrs))
     return rt
 
 def find_mustbe(beati, name=None, attrs={}, recursive=True, text=None,
          **kwargs):
-    print("iam in find_mustbe")
+
     rt = beati.find(name,attrs,recursive,text,**kwargs)
     if not rt:
         print(beati.prettify())
-        raise FileExistsError("name={0},attrs={1}".format(name,attrs))
+        raise FecMissSyntaxErr("name={0},attrs={1}".format(name,attrs))
     return rt
 
 
@@ -62,11 +63,12 @@ class CDicFetch:
     mDicUrl = None
     mMp3Fold = None
     mOxurl="http://www.oxforddictionaries.com/definition/american_english/"
-    def __init__(self,MpsFold,WordsFileName,DicUrl):
+    def __init__(self,MpsFold,WordsFileName,DicUrl,file_name=None):  # at now just store per word per file
         try:
             tmppath = Path(".").joinpath(MpsFold)
             if(tmppath.is_dir()==False):
                 tmppath.mkdir()
+            self.file_name=file_name
             self.mMp3Fold=tmppath
             self.mWordsIO = open(WordsFileName,"r")
             self.mDicUrl= DicUrl
@@ -156,7 +158,12 @@ class CDicFetch:
             if inflectionGroup:
                 subdefinition["inflectionGroup"] =inflectionGroup.get_text()
             subdefinition["sense"]=[]
-            for webse2 in find_all_mustbe(means,"div",class_="se2"):
+            print(subdefinition["partOfSpeech"])
+            se2_list=[]
+            se2_list=means.find_all("div",class_="se2")
+            if se2_list==None:
+                se2_list=[means,]
+            for webse2 in se2_list:
                 main_se2 = {"meaning":None,"example":None,"synonyms":None,"subsense":None}
                 webmain_se2 = find_mustbe(webse2,"div",class_="msDict sense")
                 main_se2 = self.get_def(webmain_se2)
@@ -170,10 +177,12 @@ class CDicFetch:
 
 
 
-
+#### the main definition may be multipul,like "go" ,now just read one,fix it later
     def ExtractPage(self,word):
-
-        dstUrl=self.mDicUrl+word.strip()
+        word=word.strip()
+        pp=re.compile(r"[^a-zA-z]")
+        store_word=pp.sub("_",word)
+        dstUrl=self.mDicUrl+word
         data=dict(mpDicData)
         FecError.dstUrl=dstUrl
         FecError.word=word
@@ -189,55 +198,61 @@ class CDicFetch:
         else:
             print("successful open URL| {0}".format(dstUrl))
         soup =BeautifulSoup(r.text)
+
         contentup = soup.find("div",id="firstClickFreeAllowed")
         content = contentup.find("div",class_="entryPageContent")
 #        header = content.find("div",class_="entryHeader")
 #        content = soup.select("#firstClickFreeAllowed .entryPageContent")[0]
         lWord=data["word"]
         header = content.find("header",class_="entryHeader")
-        webName=header.find("strong")
-        lWord["name"]=webName.string
-        lWord["rank"]=webName.next_sibling["class"][0]
+        webName=header.find(class_="pageTitle")
+        lWord["name"]=webName.text.strip()
+        rankstr=webName.next_sibling["class"][0]
+        rankrt= re.findall(r"^top[0-9]{1,5}",rankstr)
+        if rankrt:
+            lWord["rank"]=rankrt[0]
         webSyl=header.find(class_="syllabified")
         if webSyl!=None:
-            lWord["syl"]=webSyl.string
+            lWord["syl"]=webSyl.string.strip()
         webLin=header.find(class_="linebreaks")
         if webLin!=None:
-            lWord["lin"]=webLin.string
+            lWord["lin"]=webLin.string.strip()
         webPro=header.find(class_="headpron")
-        lWord["pro"]=webPro.get_text()
+        if webPro!=None:
+            prore=re.compile(r"/.*?/")
+            pro_rt=prore.findall(webPro.get_text())
+            if pro_rt:
+                lWord["pro"]=pro_rt[0]
         print(webPro.div["data-src-mp3"])
 
-        self.downmp3(webPro.div["data-src-mp3"],word.strip())
+        self.downmp3(webPro.div["data-src-mp3"],store_word)
         webdefs_must=find_all_mustbe(content,"section",class_="se1 senseGroup")
 
-        for mydef in webdefs_must:
-            print("....")
-            print(mydef.find(class_="partOfSpeech").string)
+
         data["definition"]=self.get_main_content(content)
 
         # etymology  <section class="etymology">
         for etymology in content.find_all("section",class_="etymology"):
             tmph3=find_mustbe(etymology,"h3")
-            str =tmph3.get_text()
+            ety_str =tmph3.get_text()
             tmph3.decompose()
-            if re.search("\brhyme\b",str):
+            if re.search(r"\brhyme\b",ety_str):
                 data["rhyme"]=etymology.get_text()
             else:
-                data[str]=etymology.get_text()
+                data[ety_str]=etymology.get_text()
         # phrases & phrase verb  <section class="subEntryBlock phrasesSubEntryBlock"><h3>Phrasal verbs</h3>
         for phrases in content.find_all("section",class_="phrasesSubEntryBlock"):
             phr = find_mustbe(phrases,"h3").string
             thedl = find_mustbe(phrases,"dl")
             data[phr]=[]
-            print(phr)
+
             for webphr_def in find_all_mustbe(thedl,"div",class_="subEntry"):
                 phr_def={}
                 wordss=find_mustbe(find_mustbe(webphr_def,"dt") ,"h4").get_text()
                 phr_def["words"]=wordss
                 tmpdef = webphr_def.find("dd",class_="sense")
                 definition=None
-                print(wordss)
+
                 if tmpdef:
                     definition=self.get_def(tmpdef)
                 else:
@@ -250,8 +265,34 @@ class CDicFetch:
 
                 data[phr].append(phr_def)
 
-        print(data["definition"][0])
-        print(data["definition"][1])
+#  read div responsive_cell_right,nearby and see also
+        related = soup.find("div",class_="responsive_cell_right").find("div",class_="relatedBlock")
+        if related:
+            title = related.find("h4")
+            if title:
+                re_con = title.find_next_sibling("div",class_="responsive_columns_2_on_desktop")
+                if re_con:
+                    for ron_word in re_con.find_all("span",class_="alpha_title"):
+                        title_str=re.findall(r"[a-zA-Z]+\b",title.string)[0]
+                        data[title_str]=[]
+                        data[title_str].append(ron_word.get_text())
+                    title2=re_con.find_next_sibling("h4")
+                    if title2:
+                        re_con2 = title2.find_next_sibling("div",class_="responsive_columns_2_on_desktop")
+                        if re_con2:
+                            title2_str=re.findall(r"[a-zA-Z]+\b",title2.string)[0]
+                            data[title2_str]=[]
+                            for rcon2_word in re_con2.find_all("span",class_="arl4"):
+                                data[title2_str].append(rcon2_word.get_text())
+
+
+                        ## store to json
+        jsonname=store_word+".txt"
+        with open(str(self.mMp3Fold.joinpath(jsonname)),"w") as file_j:
+            out_str=json.dumps(data)
+            file_j.write(out_str)
+        print("finish word {0} ..".format(store_word))
 
 test = CDicFetch("test","3esl.txt","http://www.oxforddictionaries.com/definition/american_english/")
-test.ExtractPage("practice")
+test.ExtractPage("go")
+
