@@ -173,7 +173,6 @@ class CDicFetch:
 
 
 
-
 #### the main definition may be multipul,like "go" ,now just read one,fix it later
     def ExtractPage(self,word,worker_name):
         word=word.strip()
