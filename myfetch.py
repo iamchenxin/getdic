@@ -19,7 +19,7 @@ mpDicSenseData={"meaning":None,"example":None,"synonyms":None,"subsense":None}  
 mpDicData = {"word": {"name": None, "rank": None, "syl": None,"lin":None, "pro":None},
             "definition":None,#{[{"partOfSpeech":None,"inflection":None,"sense":None },]},   #all of this item are mpDicDefData[]
             "Origin":None,"Usage":None,
-            "Phrases":None,"Phrasal verbs":None, "Derivatives":None, "rhyme":None, "See":["ERROR",], "Nearby":["ERROR",]} #
+            "Phrases":None,"Phrasal verbs":None, "Derivatives":None, "rhyme":None, "See":None, "Nearby":None} #
 
 class FecError(Exception):
     """Hello,i am error from CDicFetch~~
@@ -41,6 +41,9 @@ class FecMissSyntaxErr(FecError):
     """
     def __init__(self,syntax):
         self.syntax=syntax
+
+class FecWordEnd(FecError):
+    pass
 
 def find_all_mustbe(beati, name=None, attrs={}, recursive=True, text=None,
              limit=None, **kwargs):
@@ -70,6 +73,7 @@ class CDicFetch:
                 tmppath.mkdir()
             self.save_fold=tmppath
             self.mDicUrl= DicUrl
+            self.name="000"
             FecError.save_fold=self.save_fold
             FecError.mDicUrl=self.mDicUrl
         except FileExistsError as err:
@@ -158,7 +162,7 @@ class CDicFetch:
 #            print(subdefinition["partOfSpeech"])
             se2_list=[]
             se2_list=means.find_all("div",class_="se2")
-            if se2_list==None:
+            if se2_list.__len__()<1:
                 se2_list=[means,]
             for webse2 in se2_list:
                 main_se2 = {"meaning":None,"example":None,"synonyms":None,"subsense":None}
@@ -170,6 +174,49 @@ class CDicFetch:
                 subdefinition["sense"].append(main_se2)
             defss.append(subdefinition)
         return defss
+
+    def get_header(self,webheader,dstUrl,store_word,worker_name):
+        lWord={}
+        global loggg
+
+        webName=webheader.find(class_="pageTitle")
+
+        lWord["name"]=webName.get_text()
+        rankstr=webName.next_sibling["class"][0]
+        rankrt= re.findall(r"^top[0-9]{1,5}",rankstr)
+        if rankrt:
+            lWord["rank"]=rankrt[0]
+        webSyl=webheader.find(class_="syllabified")
+        if webSyl!=None:
+            lWord["syl"]=webSyl.string.strip()
+        webLin=webheader.find(class_="linebreaks")
+        if webLin!=None:
+            lWord["lin"]=webLin.string.strip()
+        webPro=webheader.find(class_="headpron")
+        if webPro==None:
+            webPro=find_mustbe(webheader.parent,"div",class_="headpron")
+        if webPro!=None:
+            prore=re.compile(r"/.*?/")
+            pro_rt=prore.findall(webPro.get_text())
+            if pro_rt:
+                lWord["pro"]=pro_rt[0]
+
+        rrmp3 = webPro.div["data-src-mp3"]
+        rrogg = webPro.div["data-src-ogg"]
+
+        if rrmp3:
+            print("{0} begin download {1}".format(worker_name,store_word+".mp3"),end="")
+            self.down_file(rrmp3,store_word+".mp3")
+        else:
+            print("NO!MP3!at URL::{0}".format(dstUrl))
+            loggg["noMp3"].append(store_word)
+        if rrogg:
+            print("{0} begin download {1}".format(worker_name,store_word+".ogg"),end="")
+            self.down_file(rrogg,store_word+".ogg")
+        else:
+            print("NO!OGG!at URL::{0}".format(dstUrl))
+            loggg["noOgg"].append(store_word)
+        return lWord
 
 
 
@@ -184,7 +231,7 @@ class CDicFetch:
         FecError.word=word
 
         try:
-            r=requests.get(dstUrl)
+            r=requests.get(dstUrl,timeout=5)
         except Exception as err:
             print("unknown error:{0},sys info is{1}".format(err,sys.exc_info()))
             raise
@@ -196,45 +243,28 @@ class CDicFetch:
         soup =BeautifulSoup(r.text)
 
         contentup = soup.find("div",id="firstClickFreeAllowed")
-        content = contentup.find("div",class_="entryPageContent")
-#        header = content.find("div",class_="entryHeader")
-#        content = soup.select("#firstClickFreeAllowed .entryPageContent")[0]
-        lWord=data["word"]
-        header = content.find("header",class_="entryHeader")
-        webName=header.find(class_="pageTitle")
-        lWord["name"]=webName.text.strip()
-        rankstr=webName.next_sibling["class"][0]
-        rankrt= re.findall(r"^top[0-9]{1,5}",rankstr)
-        if rankrt:
-            lWord["rank"]=rankrt[0]
-        webSyl=header.find(class_="syllabified")
-        if webSyl!=None:
-            lWord["syl"]=webSyl.string.strip()
-        webLin=header.find(class_="linebreaks")
-        if webLin!=None:
-            lWord["lin"]=webLin.string.strip()
-        webPro=header.find(class_="headpron")
-        if webPro!=None:
-            prore=re.compile(r"/.*?/")
-            pro_rt=prore.findall(webPro.get_text())
-            if pro_rt:
-                lWord["pro"]=pro_rt[0]
+        contentss = find_all_mustbe(contentup,"div",class_="entryPageContent")
+        if contentss.__len__()<0:
+            raise FecMissSyntaxErr(entryPageContent)
+        content=contentss[0]
 
-        rrmp3 = webPro.div["data-src-mp3"]
-        rrogg = webPro.div["data-src-ogg"]
-        if rrmp3:
-            print("{0} begin download {1}".format(worker_name,store_word+".mp3"),end="")
-            self.down_file(rrmp3,store_word+".mp3")
-        else:
-            print("NO!MP3!at URL::{0}".format(dstUrl))
-        if rrogg:
-            print("{0} begin download {1}".format(worker_name,store_word+".ogg"),end="")
-            self.down_file(rrogg,store_word+".ogg")
-        else:
-            print("NO!OGG!at URL::{0}".format(dstUrl))
+        # get word inf and main definitions
+        webheader = find_mustbe(content,"header",class_="entryHeader")
+        data["word"]=self.get_header(webheader,dstUrl,store_word,worker_name)
 
         webdefs_must=find_all_mustbe(content,"section",class_="se1 senseGroup")
         data["definition"]=self.get_main_content(content)
+
+        #process word's homograph
+        content_plus = contentss[1:]
+        data["homograph"]=[]
+        for webhomograph in content_plus:
+            homo_word={"word":[],"definition":[]}
+            webheader_s=find_mustbe(webhomograph,"header",class_="entryHeader")
+            homo_word["word"]=self.get_header(webheader_s,dstUrl,store_word,worker_name)
+            webdefs_must_s=find_all_mustbe(webhomograph,"section",class_="se1 senseGroup")
+            homo_word["definition"]=self.get_main_content(webhomograph)
+            data["homograph"].append(homo_word)
 
         # etymology  <section class="etymology">
         for etymology in content.find_all("section",class_="etymology"):
@@ -292,11 +322,11 @@ class CDicFetch:
 
 
                         ## store to json
-        jsonname=store_word+".txt"
+        jsonname=store_word+".json"
         with open(str(self.save_fold.joinpath(jsonname)),"w") as file_j:
             out_str=json.dumps(data)
             file_j.write(out_str)
-        print("{0} FINISH {1}.txt".format(worker_name,store_word))
+        print("{0} FINISH {1}.json".format(worker_name,store_word))
 
 
 
@@ -309,17 +339,27 @@ def init_wordfile(filename):
         raise
 word_free=True
 word_file=None
+block_count=0;
 def fget_word():
     global word_free
     global word_file
+    global block_count
     while True:
         if word_free==True:
             word_free=False
-            str=word_file.readline()
+            try:
+                str=word_file.readline()
+            except Exception as err:
+                print(err)
+                print("no word supply")
+                raise FecWordEnd()
             word_free=True
             return str
         else:
+            block_count=block_count+1
             print("WORD READ BLOCKED~~~~~")
+            if block_count>50:
+                raise FecWordEnd()
 
 def close_wordfile():
     word_file.close()
@@ -327,7 +367,7 @@ def close_wordfile():
 
 
 
-loggg={"word_count":0,"current_word":None,"badword_list":[]}
+loggg={"word_count":0,"current_word":None,"syntax_wrong":[],"badword_list":[],"noMp3":[],"noOgg":[]}
 
 def log_Badword(word):
     global badword_list
@@ -338,7 +378,10 @@ def log_store():
     with open("diclog.txt","w") as logfile:
         logfile.write( json.dumps(loggg))
 
-
+def convert_word(word):
+    word=word.strip()
+    word=re.sub(r"\s+","-",word)
+    return word
 
 q_status=False
 class fetchWorker(threading.Thread):
@@ -355,7 +398,7 @@ class fetchWorker(threading.Thread):
     def run(self):
         global loggg
         global q_status
-        print("runrunrun")
+        print("{0} run.run.run.".format(self.name))
         word=None
         while q_status==False:
             try:
@@ -366,7 +409,7 @@ class fetchWorker(threading.Thread):
                 else:
                     word=self.fget_word()
                     if word:
-                        word=word.strip()
+                        word=convert_word(word)
                         loggg["word_count"] = loggg["word_count"]+1
                         loggg["current_word"]=word
                         print("{0} read word [{1}]".format(self.name,word))
@@ -376,12 +419,22 @@ class fetchWorker(threading.Thread):
                 print("{0} time out ->{1},try again".format(self.name, word))
                 self.retry_word=word
                 continue
+            except FecMissSyntaxErr as err:
+                print(err)
+                print("{0} can't analyze syntax at [{1}] ".format(self.name,word))
+                loggg["syntax_wrong"].append(word)
+                continue
+            except FecWordEnd as err:
+                print("FecWordEnd")
+                break
             except Exception as err:
                 loggg["badword_list"].append(word)
                 print(str(err))
-                print("!!!{0} can read this word".format(self.name),end="")
-                print("but {0} still read next word".format(self.name))
+                print("!!!{0} can not read [{1}],but still read next word".format(self.name,word))
                 continue
+            finally:
+                print("{0} out circle!!!".format(self.name))
+        print("{0} is end!!!".format(self.name))
 
 
 def mainloop(url):
@@ -403,7 +456,7 @@ def mainloop(url):
                 log_store()
                 keyin=None
             if keyin!=None:
-                worker=fetchWorker("mydic",fget_word,url,keyin)
+                worker=fetchWorker("mydic2",fget_word,url,keyin)
                 worker_list.append(worker)
                 worker.start()
     except Exception as err:
