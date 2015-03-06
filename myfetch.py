@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 import re
 import json
+import threading
+import time
 
 
 
@@ -59,20 +61,16 @@ def find_mustbe(beati, name=None, attrs={}, recursive=True, text=None,
 
 
 class CDicFetch:
-    mWordsIO = None
     mDicUrl = None
-    mMp3Fold = None
-    mOxurl="http://www.oxforddictionaries.com/definition/american_english/"
-    def __init__(self,MpsFold,WordsFileName,DicUrl,file_name=None):  # at now just store per word per file
+    save_fold = None
+    def __init__(self,savefold,DicUrl):  # at now just store per word per file
         try:
-            tmppath = Path(".").joinpath(MpsFold)
+            tmppath = Path(".").joinpath(savefold)
             if(tmppath.is_dir()==False):
                 tmppath.mkdir()
-            self.file_name=file_name
-            self.mMp3Fold=tmppath
-            self.mWordsIO = open(WordsFileName,"r")
+            self.save_fold=tmppath
             self.mDicUrl= DicUrl
-            FecError.mMp3Fold=self.mMp3Fold
+            FecError.save_fold=self.save_fold
             FecError.mDicUrl=self.mDicUrl
         except FileExistsError as err:
             print("FileExistsError,err={0}\n should check the fold!same name file".format(str(err)))
@@ -95,29 +93,28 @@ class CDicFetch:
 
 
 
-    def downmp3(self,url,mp3name):
-        rmp3=None
-        mp3_file=None
+    def down_file(self,url,savename):
+        r_file=None
+        the_file=None
 
         try:
-            rmp3=requests.get(url)
-            mp3name=mp3name+".mp3"
-            mp3_file=open(str(self.mMp3Fold.joinpath(mp3name)),"wb")
+            r_file=requests.get(url)
+            the_file=open(str(self.save_fold.joinpath(savename)),"wb")
         except Exception as err:
             print("mp3 write err",err)
             raise
         else:
-            mp3_rsize=0
-            print("Begin Download {0}".format(mp3name))
-            for block in rmp3.iter_content(1024):
+            file_rsize=0
+#            print("Begin Download {0}".format(savename))
+            for block in r_file.iter_content(1024):
                 if not block:
                     break
-                mp3_file.write(block)
+                the_file.write(block)
                 print(".",end="")
-                mp3_rsize+=1
-            print("Down,{0}K".format(mp3_rsize))
+                file_rsize+=1
+            print("Down,{0}K".format(file_rsize))
         finally:
-            mp3_file.close()
+            the_file.close()
 
     def get_def(self,webdef_s):
         def_section ={}
@@ -158,7 +155,7 @@ class CDicFetch:
             if inflectionGroup:
                 subdefinition["inflectionGroup"] =inflectionGroup.get_text()
             subdefinition["sense"]=[]
-            print(subdefinition["partOfSpeech"])
+#            print(subdefinition["partOfSpeech"])
             se2_list=[]
             se2_list=means.find_all("div",class_="se2")
             if se2_list==None:
@@ -178,7 +175,7 @@ class CDicFetch:
 
 
 #### the main definition may be multipul,like "go" ,now just read one,fix it later
-    def ExtractPage(self,word):
+    def ExtractPage(self,word,worker_name):
         word=word.strip()
         pp=re.compile(r"[^a-zA-z]")
         store_word=pp.sub("_",word)
@@ -196,7 +193,7 @@ class CDicFetch:
             print("they said Exception is all??",sys.exc_info())
             raise
         else:
-            print("successful open URL| {0}".format(dstUrl))
+            print("{0} open {1}".format(worker_name,dstUrl))
         soup =BeautifulSoup(r.text)
 
         contentup = soup.find("div",id="firstClickFreeAllowed")
@@ -223,12 +220,21 @@ class CDicFetch:
             pro_rt=prore.findall(webPro.get_text())
             if pro_rt:
                 lWord["pro"]=pro_rt[0]
-        print(webPro.div["data-src-mp3"])
 
-        self.downmp3(webPro.div["data-src-mp3"],store_word)
+        rrmp3 = webPro.div["data-src-mp3"]
+        rrogg = webPro.div["data-src-ogg"]
+        if rrmp3:
+            print("{0} begin download {1}".format(worker_name,store_word+".mp3"),end="")
+            self.down_file(rrmp3,store_word+".mp3")
+        else:
+            print("NO!MP3!at URL::{0}".format(dstUrl))
+        if rrogg:
+            print("{0} begin download {1}".format(worker_name,store_word+".ogg"),end="")
+            self.down_file(rrogg,store_word+".ogg")
+        else:
+            print("NO!OGG!at URL::{0}".format(dstUrl))
+
         webdefs_must=find_all_mustbe(content,"section",class_="se1 senseGroup")
-
-
         data["definition"]=self.get_main_content(content)
 
         # etymology  <section class="etymology">
@@ -288,11 +294,128 @@ class CDicFetch:
 
                         ## store to json
         jsonname=store_word+".txt"
-        with open(str(self.mMp3Fold.joinpath(jsonname)),"w") as file_j:
+        with open(str(self.save_fold.joinpath(jsonname)),"w") as file_j:
             out_str=json.dumps(data)
             file_j.write(out_str)
-        print("finish word {0} ..".format(store_word))
+        print("{0} FINISH {1}.txt".format(worker_name,store_word))
 
-test = CDicFetch("test","3esl.txt","http://www.oxforddictionaries.com/definition/american_english/")
-test.ExtractPage("go")
 
+
+def init_wordfile(filename):
+    global word_file
+    try:
+        word_file=open(filename,"r")
+    except Exception as err:
+        print("Read word's file error,please check the file '{0}' exist".format(filename))
+        raise
+word_free=True
+word_file=None
+def fget_word():
+    global word_free
+    global word_file
+    while True:
+        if word_free==True:
+            word_free=False
+            str=word_file.readline()
+            word_free=True
+            return str
+        else:
+            print("WORD READ BLOCKED~~~~~")
+
+def close_wordfile():
+    word_file.close()
+
+
+
+
+loggg={"word_count":0,"current_word":None,"badword_list":[]}
+
+def log_Badword(word):
+    global badword_list
+    badword_list.append(word)
+
+def log_store():
+    global loggg
+    with open("diclog.txt","w") as logfile:
+        logfile.write( json.dumps(loggg))
+
+
+
+q_status=False
+class fetchWorker(threading.Thread):
+    def __init__(self,outfold,fget_word,dsturl,name="anony"):
+        threading.Thread.__init__(self)
+        self.outfold=outfold
+        self.fget_word=fget_word
+        self.dsturl=dsturl
+        self.name=name
+        self.dicfetch=CDicFetch(outfold,dsturl)
+        self.retry_word=None
+
+
+    def run(self):
+        global loggg
+        global q_status
+        print("runrunrun")
+        word=None
+        while q_status==False:
+            try:
+                if self.retry_word!=None:
+                    self.dicfetch.ExtractPage(self.retry_word,self.name)
+                    print("{0} retry [{1}] success".format(self.name,self.retry_word))
+                    self.retry_word=None  # if process it ,set to None
+                else:
+                    word=self.fget_word()
+                    if word:
+                        word=word.strip()
+                        loggg["word_count"] = loggg["word_count"]+1
+                        loggg["current_word"]=word
+                        print("{0} read word [{1}]".format(self.name,word))
+                        self.dicfetch.ExtractPage(word,self.name)
+            except requests.Timeout as timeout:
+                print(timeout)
+                print("{0} time out ->{1},try again".format(self.name, word))
+                self.retry_word=word
+                continue
+            except Exception as err:
+                loggg["badword_list"].append(word)
+                print(str(err))
+                print("!!!{0} can read this word".format(self.name),end="")
+                print("but {0} still read next word".format(self.name))
+                continue
+
+
+def mainloop(url):
+    worker_list=[]
+    init_wordfile("3esl.txt")
+    global q_status
+    try:
+        while True:
+            keyin =input()
+            if keyin =="q":
+                q_status=True
+                keyin=None
+            if keyin =="ex":
+                q_status=True
+                time.sleep(10)
+                keyin=None
+                break
+            if keyin =="s":
+                log_store()
+                keyin=None
+            if keyin!=None:
+                worker=fetchWorker("mydic",fget_word,url,keyin)
+                worker_list.append(worker)
+                worker.start()
+    except Exception as err:
+        log_store()
+        print(err)
+        raise
+    finally:
+        close_wordfile()
+
+
+
+
+if __name__ == '__main__':
+    mainloop(sys.argv[1])

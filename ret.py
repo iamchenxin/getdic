@@ -27,3 +27,17 @@ print(b4)
 str4="11  Words that rhym1ewith"
 b5=re.findall(r"[a-zA-Z]+\b",str4)
 print(b5)
+
+mylist=[]
+str5 ="accommodations\n"
+mylist.append(str5)
+str5=str5.strip()
+mylist.append(str5)
+print(str5)
+
+str6="abbr.\n"
+str6=str6.strip()
+mylist.append(str6)
+print(str6)
+
+print(mylist)
