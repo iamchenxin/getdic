@@ -44,6 +44,10 @@ class FecMissSyntaxErr(FecError):
 
 class FecWordEnd(FecError):
     pass
+class FecUnfindWord(FecError):
+    def __init__(self,word):
+        self.word=word
+    pass
 
 def find_all_mustbe(beati, name=None, attrs={}, recursive=True, text=None,
              limit=None, **kwargs):
@@ -231,12 +235,11 @@ class CDicFetch:
         FecError.word=word
 
         try:
-            r=requests.get(dstUrl,timeout=5)
+            r=requests.get(dstUrl,timeout=(6.1,39))
+            if r.status_code==404:
+                raise FecUnfindWord(word)
         except Exception as err:
             print("unknown error:{0},sys info is{1}".format(err,sys.exc_info()))
-            raise
-        except:
-            print("they said Exception is all??",sys.exc_info())
             raise
         else:
             print("{0} open {1}".format(worker_name,dstUrl))
@@ -354,7 +357,10 @@ def fget_word():
                 print("no word supply")
                 raise FecWordEnd()
             word_free=True
-            return str
+            if str:
+                loggg["word_count"] = loggg["word_count"]+1
+                loggg["current_word"]=str
+                return str
         else:
             block_count=block_count+1
             print("WORD READ BLOCKED~~~~~")
@@ -367,7 +373,7 @@ def close_wordfile():
 
 
 
-loggg={"word_count":0,"current_word":None,"syntax_wrong":[],"badword_list":[],"noMp3":[],"noOgg":[]}
+loggg={"word_count":0,"worker_table":{}, "current_word":None,"syntax_wrong":[],"badword_list":[],"unfind_word":[], "noMp3":[],"noOgg":[]}
 
 def log_Badword(word):
     global badword_list
@@ -375,7 +381,7 @@ def log_Badword(word):
 
 def log_store():
     global loggg
-    with open("diclog.txt","w") as logfile:
+    with open("diclog.json","w") as logfile:
         logfile.write( json.dumps(loggg))
 
 def convert_word(word):
@@ -393,6 +399,7 @@ class fetchWorker(threading.Thread):
         self.name=name
         self.dicfetch=CDicFetch(outfold,dsturl)
         self.retry_word=None
+        self.worker_count=0
 
 
     def run(self):
@@ -410,8 +417,7 @@ class fetchWorker(threading.Thread):
                     word=self.fget_word()
                     if word:
                         word=convert_word(word)
-                        loggg["word_count"] = loggg["word_count"]+1
-                        loggg["current_word"]=word
+                        self.worker_count=loggg["word_count"]
                         print("{0} read word [{1}]".format(self.name,word))
                         self.dicfetch.ExtractPage(word,self.name)
             except requests.Timeout as timeout:
@@ -424,6 +430,10 @@ class fetchWorker(threading.Thread):
                 print("{0} can't analyze syntax at [{1}] ".format(self.name,word))
                 loggg["syntax_wrong"].append(word)
                 continue
+            except FecUnfindWord as err:
+                print("{0} unfind [{1}] in web,move to next word".format(self.name,word))
+                loggg["unfind_word"].append(word)
+                continue
             except FecWordEnd as err:
                 print("FecWordEnd")
                 break
@@ -432,14 +442,16 @@ class fetchWorker(threading.Thread):
                 print(str(err))
                 print("!!!{0} can not read [{1}],but still read next word".format(self.name,word))
                 continue
+            else:
+                pass
             finally:
-                print("{0} out circle!!!".format(self.name))
+                pass
         print("{0} is end!!!".format(self.name))
 
 
-def mainloop(url):
+def mainloop(outfold,dict,url):
     worker_list=[]
-    init_wordfile("3esl.txt")
+    init_wordfile(dict)
     global q_status
     try:
         while True:
@@ -453,10 +465,14 @@ def mainloop(url):
                 keyin=None
                 break
             if keyin =="s":
+                workerdd={}
+                for ww in worker_list:
+                    workerdd[ww.name]=ww.worker_count
+                loggg["worker_table"]=workerdd
                 log_store()
                 keyin=None
             if keyin!=None:
-                worker=fetchWorker("mydic2",fget_word,url,keyin)
+                worker=fetchWorker(outfold,fget_word,url,keyin)
                 worker_list.append(worker)
                 worker.start()
     except Exception as err:
@@ -468,6 +484,6 @@ def mainloop(url):
 
 
 
-
+# sys.argv[1] = out put fold ,sys.argv[2]= dictionary, sys.argv[3] = dst url
 if __name__ == '__main__':
-    mainloop(sys.argv[1])
+    mainloop(sys.argv[1],sys.argv[2],sys.argv[3])

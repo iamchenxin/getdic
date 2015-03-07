@@ -9,5 +9,7 @@ import myfetch
 
 myfetch.init_wordfile("3esl.txt")
 dicf=myfetch.CDicFetch("test","http://www.oxforddictionaries.com/definition/english/")
-word = myfetch.convert_word("absently")
+word = myfetch.convert_word("absentlya")
 dicf.ExtractPage(word,"德华")
+
+print( myfetch.loggg)
